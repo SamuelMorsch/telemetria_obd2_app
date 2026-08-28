@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'dart:typed_data';
 import 'package:flutter/foundation.dart';
 import 'package:flutter_bluetooth_serial/flutter_bluetooth_serial.dart';
+import 'database_helper.dart';
 
 class OBDService {
   BluetoothConnection? _connection;
@@ -12,8 +13,11 @@ class OBDService {
 
   final ValueNotifier<int> rpm = ValueNotifier<int>(0);
   final ValueNotifier<int> speed = ValueNotifier<int>(0);
+  final ValueNotifier<List<String>> faultCodes = ValueNotifier<List<String>>([]);
   final ValueNotifier<String> connectionStatus = ValueNotifier<String>("Desconectado");
   final ValueNotifier<String> rawDebug = ValueNotifier<String>("Aguardando dados...");
+  final Set<String> _falhasJaSalvasNaSessao = {};
+
 
   Future<void> connect(BluetoothDevice device) async {
     try {
@@ -37,7 +41,28 @@ class OBDService {
     connectionStatus.value = "Desconectado";
     rpm.value = 0;
     speed.value = 0;
+    faultCodes.value = [];
     rawDebug.value = "Aguardando dados...";
+    _falhasJaSalvasNaSessao.clear();
+  }
+
+  // Função bidirecional: Envia o comando para limpar os erros da ECU do carro
+  Future<void> clearDTCs() async {
+    if (_connection == null || !_connection!.isConnected) return;
+
+    _isPolling = false;
+    await Future.delayed(const Duration(milliseconds: 500));
+
+    connectionStatus.value = "Apagando falhas da ECU...";
+
+    await _sendAndAwaitResponse("04", timeoutSeconds: 5);
+
+    faultCodes.value = ["Nenhuma falha detectada"];
+    _falhasJaSalvasNaSessao.clear();
+
+    await Future.delayed(const Duration(seconds: 1));
+    connectionStatus.value = "Lendo telemetria ao vivo";
+    _startPolling();
   }
 
   Future<String> _sendAndAwaitResponse(String command, {int timeoutSeconds = 15}) async {
@@ -109,15 +134,32 @@ class OBDService {
 
   void _startPolling() async {
     _isPolling = true;
-    bool askRpm = true;
+    int cycle = 1;
 
     while (_isPolling && _connection != null && _connection!.isConnected) {
-      String cmd = askRpm ? "010C" : "010D";
+      String cmd;
+      bool isCheckingErrors = false;
+
+      if (cycle % 10 == 0) {
+        cmd = "03";
+        isCheckingErrors = true;
+      } else if (cycle % 2 == 0) {
+        cmd = "010C"; // RPM
+      } else {
+        cmd = "010D"; // Velocidade
+      }
+
       String response = await _sendAndAwaitResponse(cmd, timeoutSeconds: 15);
 
-      _parseOBDResponse(response);
+      if (isCheckingErrors) {
+        _parseDTCResponse(response);
+      } else {
+        _parseOBDResponse(response);
+      }
 
-      askRpm = !askRpm;
+      cycle++;
+      if (cycle > 1000) cycle = 1;
+
       await Future.delayed(const Duration(milliseconds: 100));
     }
   }
@@ -128,28 +170,78 @@ class OBDService {
     try {
       String cleanHex = response.replaceAll(' ', '').replaceAll('\r', '').replaceAll('\n', '').toUpperCase();
 
-      if (cleanHex.contains("NODATA") || cleanHex.contains("SEARCHING")) return;
+      if (cleanHex.contains("NODATA") || cleanHex.contains("SEARCHING") || cleanHex.isEmpty) return;
 
       if (cleanHex.contains("410C")) {
         int idx = cleanHex.indexOf("410C");
         if (cleanHex.length >= idx + 8) {
           String aHex = cleanHex.substring(idx + 4, idx + 6);
           String bHex = cleanHex.substring(idx + 6, idx + 8);
-          int a = int.parse(aHex, radix: 16);
-          int b = int.parse(bHex, radix: 16);
-          rpm.value = ((a * 256) + b) ~/ 4;
+
+          int? a = int.tryParse(aHex, radix: 16);
+          int? b = int.tryParse(bHex, radix: 16);
+
+          if (a != null && b != null) {
+            rpm.value = ((a * 256) + b) ~/ 4;
+          }
         }
       }
       else if (cleanHex.contains("410D")) {
         int idx = cleanHex.indexOf("410D");
         if (cleanHex.length >= idx + 6) {
           String aHex = cleanHex.substring(idx + 4, idx + 6);
-          int a = int.parse(aHex, radix: 16);
-          speed.value = a;
+
+          int? a = int.tryParse(aHex, radix: 16);
+
+          if (a != null) {
+            speed.value = a;
+          }
         }
       }
     } catch (e) {
-      rawDebug.value = "ERRO DE PARSE: $e";
+      debugPrint("Erro no parse do OBD: $e");
+    }
+  }
+
+  void _parseDTCResponse(String response) {
+    String cleanHex = response.replaceAll(' ', '').replaceAll('\r', '').replaceAll('\n', '').toUpperCase();
+
+    if (cleanHex.contains("NODATA") || cleanHex.isEmpty) {
+      faultCodes.value = ["Nenhuma falha detectada"];
+      return;
+    }
+
+    if (cleanHex.contains("43")) {
+      int startIdx = cleanHex.indexOf("43") + 2;
+      String data = cleanHex.substring(startIdx);
+
+      List<String> codes = [];
+
+      for (int i = 0; i < data.length - 3; i += 4) {
+        String hexCode = data.substring(i, i + 4);
+        if (hexCode == "0000") continue;
+
+        String firstChar = "";
+        int firstHex = int.parse(hexCode[0], radix: 16);
+
+        switch (firstHex >> 2) {
+          case 0: firstChar = "P"; break;
+          case 1: firstChar = "C"; break;
+          case 2: firstChar = "B"; break;
+          case 3: firstChar = "U"; break;
+        }
+
+        String secondChar = (firstHex & 0x3).toString();
+        String finalCode = "$firstChar$secondChar${hexCode.substring(1)}";
+        codes.add(finalCode);
+
+        if (!_falhasJaSalvasNaSessao.contains(finalCode)) {
+          DatabaseHelper.instance.inserirFalha(finalCode);
+          _falhasJaSalvasNaSessao.add(finalCode);
+        }
+      }
+
+      faultCodes.value = codes.isEmpty ? ["Nenhuma falha detectada"] : codes;
     }
   }
 }
