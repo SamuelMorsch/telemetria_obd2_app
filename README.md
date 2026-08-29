@@ -42,7 +42,7 @@ Projeto desenvolvido como Trabalho de Conclusão de Curso (TCC), aplicando conce
 
 O sistema global adota uma arquitetura polirepositório **Edge-to-Cloud**. Este aplicativo representa a ponta (Edge), responsável pela coleta primária de hardware.
 
-*(Espaço reservado para adicionar uma imagem do seu diagrama de arquitetura C4 ou fluxo de dados no futuro)*
+*(colocarei uma imagem do diagrama de arquitetura C4 ou fluxo de dados no futuro)*
 
 * **Camada de Hardware:** Scanner OBD-II ELM327.
 * **Camada de Conectividade:** `flutter_bluetooth_serial` processando pacotes hexadecimais brutos.
@@ -62,7 +62,7 @@ O sistema global adota uma arquitetura polirepositório **Edge-to-Cloud**. Este 
 
 A interface foi projetada utilizando os princípios de **Dark HUD (Heads-Up Display)**, padrão na indústria automotiva moderna. O fundo em tons de Slate (grafite/azul marinho) reduz o cansaço visual, economiza bateria em telas OLED e minimiza reflexos no para-brisa durante o uso noturno.
 
-*(Adicione aqui algumas screenshots da tela principal do app e da tela de histórico no futuro)*
+*(colocarei aqui algumas prints da tela principal do app e da tela de histórico no futuro)*
 
 <a id="execução"></a>
 ## Instruções de Execução
