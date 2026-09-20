@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'database_helper.dart';
 import 'obd_service.dart'; // Precisa importar para usar o clearDTCs
 import 'pdf_service.dart';
+import 'api_service.dart';
 
 class HistoricoScreen extends StatefulWidget {
   final OBDService obdService; // Recebemos o serviço por parâmetro
@@ -26,6 +27,16 @@ class _HistoricoScreenState extends State<HistoricoScreen> {
         backgroundColor: const Color(0xFF0F172A),
         foregroundColor: Colors.white,
         actions: [
+          IconButton(
+            icon: const Icon(Icons.cloud_upload_rounded, color: Colors.blueAccent),
+            tooltip: "Sincronizar com a Nuvem",
+            onPressed: () async {
+              ScaffoldMessenger.of(context).showSnackBar(
+                  const SnackBar(content: Text('Enviando dados para a oficina...'))
+              );
+              await ApiService.sincronizarComNuvem();
+            },
+          ),
           IconButton(
             icon: const Icon(Icons.picture_as_pdf, color: Colors.redAccent),
             tooltip: "Gerar Relatório PDF",

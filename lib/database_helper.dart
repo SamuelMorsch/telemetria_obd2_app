@@ -47,4 +47,5 @@ class DatabaseHelper {
     final db = await instance.database;
     await db.delete('falhas'); // Deleta todas as linhas da tabela
   }
+
 }
