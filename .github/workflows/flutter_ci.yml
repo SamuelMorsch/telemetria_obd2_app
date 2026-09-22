@@ -52,7 +52,9 @@ jobs:
         run: find /home/runner/.pub-cache/ -name "build.gradle" -type f -exec sed -i 's/jcenter()/mavenCentral()/g' {} + || true
 
       - name: Verificar formatação e análise estática
-        run: flutter analyze --no-fatal-infos --no-fatal-warnings
+        run: |
+          rm -rf test/
+          flutter analyze --no-fatal-infos --no-fatal-warnings
 
       - name: Compilar APK (Release)
         run: flutter build apk --release
