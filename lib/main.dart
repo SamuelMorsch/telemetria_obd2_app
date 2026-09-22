@@ -29,11 +29,6 @@ class TelemetriaApp extends StatelessWidget {
             letterSpacing: 1.2,
           ),
         ),
-        cardTheme: CardThemeData(
-          color: const Color(0xFF1E293B), // Cor dos painéis (Slate 800)
-          elevation: 8,
-          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
-        ),
         useMaterial3: true,
       ),
       home: const HomeScreen(),
