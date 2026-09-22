@@ -27,16 +27,28 @@ jobs:
           flutter-version: '3.19.6'
           channel: 'stable'
 
-      - name: Injetar tag V2 no Manifest (Bypass automático para CI)
+      - name: Opção Nuclear - Recriar Android V2 no Servidor
         run: |
-          if ! grep -q "flutterEmbedding" android/app/src/main/AndroidManifest.xml; then
-            sed -i 's/<\/application>/<meta-data android:name="flutterEmbedding" android:value="2" \/><\/application>/' android/app/src/main/AndroidManifest.xml
+          # 1. Salvar permissões atuais de Bluetooth (ignora erro se não achar)
+          grep "<uses-permission" android/app/src/main/AndroidManifest.xml > perms.txt || true
+          
+          # 2. Destruir a pasta problemática vinda do Git
+          rm -rf android/
+          
+          # 3. Recriar a pasta nativa V2 fresca na nuvem
+          flutter create --platforms=android .
+          
+          # 4. Injetar as permissões de Bluetooth de volta no novo Manifesto
+          if [ -s perms.txt ]; then
+            sed -i '/<manifest/r perms.txt' android/app/src/main/AndroidManifest.xml
+          else
+            sed -i '/<manifest/a \    <uses-permission android:name="android.permission.BLUETOOTH" />\n    <uses-permission android:name="android.permission.BLUETOOTH_ADMIN" />\n    <uses-permission android:name="android.permission.BLUETOOTH_CONNECT" />\n    <uses-permission android:name="android.permission.BLUETOOTH_SCAN" />\n    <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />' android/app/src/main/AndroidManifest.xml
           fi
 
       - name: Instalar dependências
         run: flutter pub get
 
-      - name: Hack CI - Remover jcenter() dos pacotes antigos (Correção Bluetooth)
+      - name: Hack CI - Remover jcenter() dos pacotes antigos
         run: find /home/runner/.pub-cache/ -name "build.gradle" -type f -exec sed -i 's/jcenter()/mavenCentral()/g' {} + || true
 
       - name: Verificar formatação e análise estática
