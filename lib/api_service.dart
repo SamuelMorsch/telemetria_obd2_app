@@ -3,7 +3,8 @@ import 'package:http/http.dart' as http;
 import 'database_helper.dart';
 
 class ApiService {
-  static const String baseUrl = 'https://api-telemetria-tcc.onrender.com/api';
+  // IP da instância EC2 na AWS configurada para produção
+  static const String baseUrl = 'http://15.229.77.63:3000/api';
 
   static Future<void> sincronizarComNuvem() async {
     try {
@@ -15,13 +16,13 @@ class ApiService {
         return;
       }
 
-      // 2. Monta o pacote JSON no mesmo formato que testamos no Thunder Client
+      // 2. Monta o pacote JSON
       final pacote = jsonEncode({
         "data_sincronizacao": DateTime.now().toIso8601String(),
         "falhas": falhas
       });
 
-      // 3. Dispara para o Servidor Node.js
+      // 3. Dispara para a API Node.js rodando na AWS
       final resposta = await http.post(
         Uri.parse('$baseUrl/sincronizar'),
         headers: {"Content-Type": "application/json"},
@@ -30,8 +31,8 @@ class ApiService {
 
       // 4. Verifica se o servidor respondeu com 201 (Created)
       if (resposta.statusCode == 201) {
-        print("Dados enviados com sucesso para a nuvem!");
-        // Opcional: Limpar o histórico local após confirmar que a nuvem recebeu
+        print("Dados enviados com sucesso para a AWS!");
+        // Limpa o histórico local após confirmar que a nuvem recebeu
         await DatabaseHelper.instance.limparHistorico();
       } else {
         print("Erro do servidor: ${resposta.body}");

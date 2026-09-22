@@ -18,7 +18,6 @@ class OBDService {
   final ValueNotifier<String> rawDebug = ValueNotifier<String>("Aguardando dados...");
   final Set<String> _falhasJaSalvasNaSessao = {};
 
-
   Future<void> connect(BluetoothDevice device) async {
     try {
       connectionStatus.value = "Conectando fisicamente...";
@@ -46,7 +45,6 @@ class OBDService {
     _falhasJaSalvasNaSessao.clear();
   }
 
-  // Função bidirecional: Envia o comando para limpar os erros da ECU do carro
   Future<void> clearDTCs() async {
     if (_connection == null || !_connection!.isConnected) return;
 
@@ -203,6 +201,16 @@ class OBDService {
     }
   }
 
+  // traduzir códigos OBD-II reais
+  String _obterDescricaoFalha(String codigo) {
+    Map<String, String> dicionario = {
+      'P0043': 'Circuito do aquecedor da sonda lambda baixo',
+      'P0100': 'Falha no sensor de fluxo de massa de ar (MAF)',
+      'P0300': 'Falha de ignição múltipla detectada',
+    };
+    return dicionario[codigo] ?? 'Falha de telemetria identificada pela ECU';
+  }
+
   void _parseDTCResponse(String response) {
     String cleanHex = response.replaceAll(' ', '').replaceAll('\r', '').replaceAll('\n', '').toUpperCase();
 
@@ -236,7 +244,8 @@ class OBDService {
         codes.add(finalCode);
 
         if (!_falhasJaSalvasNaSessao.contains(finalCode)) {
-          DatabaseHelper.instance.inserirFalha(finalCode);
+          String descricao = _obterDescricaoFalha(finalCode);
+          DatabaseHelper.instance.inserirFalha(finalCode, descricao);
           _falhasJaSalvasNaSessao.add(finalCode);
         }
       }

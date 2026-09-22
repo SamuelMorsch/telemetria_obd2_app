@@ -23,6 +23,7 @@ class DatabaseHelper {
           CREATE TABLE falhas(
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             codigo TEXT,
+            descricao TEXT,
             timestamp TEXT
           )
         ''');
@@ -30,10 +31,11 @@ class DatabaseHelper {
     );
   }
 
-  Future<void> inserirFalha(String codigo) async {
+  Future<void> inserirFalha(String codigo, String descricao) async {
     final db = await instance.database;
     await db.insert('falhas', {
       'codigo': codigo,
+      'descricao': descricao,
       'timestamp': DateTime.now().toIso8601String(),
     });
   }
@@ -47,5 +49,4 @@ class DatabaseHelper {
     final db = await instance.database;
     await db.delete('falhas'); // Deleta todas as linhas da tabela
   }
-
 }
