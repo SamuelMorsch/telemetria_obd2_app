@@ -74,13 +74,12 @@ class BackendClient {
   Future<List<VehicleInfo>> vehicles() async {
     final List<Object?> list = await _call('GET', '/api/vehicles') as List<Object?>;
     return <VehicleInfo>[
-      for (final Object? item in list)
-        VehicleInfo(
-          id: (item! as Map<String, Object?>)['id']! as String,
-          plate: (item as Map<String, Object?>)['plate']! as String,
-          model: (item as Map<String, Object?>)['model'] as String?,
-        ),
+      for (final Object? item in list) _vehicleFromJson(item! as Map<String, Object?>),
     ];
+  }
+
+  static VehicleInfo _vehicleFromJson(Map<String, Object?> json) {
+    return VehicleInfo(id: json['id']! as String, plate: json['plate']! as String, model: json['model'] as String?);
   }
 
   Future<VehicleInfo> createVehicle({required String plate, String? model}) async {
@@ -89,7 +88,7 @@ class BackendClient {
       '/api/vehicles',
       body: <String, Object?>{'plate': plate, if (model != null && model.isNotEmpty) 'model': model},
     ) as Map<String, Object?>;
-    return VehicleInfo(id: json['id']! as String, plate: json['plate']! as String, model: json['model'] as String?);
+    return _vehicleFromJson(json);
   }
 
   Future<Object?> _call(

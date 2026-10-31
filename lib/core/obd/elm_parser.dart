@@ -1,4 +1,4 @@
-/// Decodificação das respostas do adaptador ELM327. Funções puras, sem I/O.
+// Decodificação das respostas do adaptador ELM327. Funções puras, sem I/O.
 
 const List<String> _fatalErrors = <String>[
   'UNABLE TO CONNECT',
