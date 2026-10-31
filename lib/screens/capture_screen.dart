@@ -165,20 +165,23 @@ class _CaptureScreenState extends State<CaptureScreen> {
                 ),
               ),
             const SizedBox(height: 8),
-            GridView.count(
-              crossAxisCount: 2,
-              shrinkWrap: true,
-              physics: const NeverScrollableScrollPhysics(),
-              childAspectRatio: 2.2,
-              mainAxisSpacing: 8,
-              crossAxisSpacing: 8,
-              children: <Widget>[
-                _Stat(label: 'Tensão (adaptador)', value: _fmt(v?.batteryVoltage, digits: 2), unit: 'V', alert: lowVoltage),
-                _Stat(label: 'Tensão (central)', value: _fmt(v?.controlModuleVoltage, digits: 2), unit: 'V'),
-                _Stat(label: 'Rotação', value: _fmt(v?.rpm), unit: 'rpm'),
-                _Stat(label: 'Velocidade', value: _fmt(v?.speedKmh), unit: 'km/h'),
-                _Stat(label: 'Temp. do motor', value: _fmt(v?.coolantTempC), unit: '°C'),
-              ],
+            LayoutBuilder(
+              builder: (BuildContext context, BoxConstraints constraints) {
+                // Duas colunas; a altura de cada cartão acompanha o texto (não é mais fixa).
+                final double width = (constraints.maxWidth - 8) / 2;
+                final List<Widget> stats = <Widget>[
+                  _Stat(label: 'Tensão (adaptador)', value: _fmt(v?.batteryVoltage, digits: 2), unit: 'V', alert: lowVoltage),
+                  _Stat(label: 'Tensão (central)', value: _fmt(v?.controlModuleVoltage, digits: 2), unit: 'V'),
+                  _Stat(label: 'Rotação', value: _fmt(v?.rpm), unit: 'rpm'),
+                  _Stat(label: 'Velocidade', value: _fmt(v?.speedKmh), unit: 'km/h'),
+                  _Stat(label: 'Temp. do motor', value: _fmt(v?.coolantTempC), unit: '°C'),
+                ];
+                return Wrap(
+                  spacing: 8,
+                  runSpacing: 8,
+                  children: <Widget>[for (final Widget stat in stats) SizedBox(width: width, child: stat)],
+                );
+              },
             ),
             const SizedBox(height: 8),
             Card(
@@ -197,7 +200,7 @@ class _CaptureScreenState extends State<CaptureScreen> {
                   children: <Widget>[
                     Row(
                       children: <Widget>[
-                        Text('Códigos de falha (${c.dtcs.length})', style: Theme.of(context).textTheme.titleMedium),
+                        Text('Códigos de falha (${c.dtcReadsDone == 0 ? '—' : c.dtcs.length})', style: Theme.of(context).textTheme.titleMedium),
                         const Spacer(),
                         TextButton(
                           onPressed: c.status == CaptureStatus.capturing ? c.readDtcsSoon : null,
@@ -205,7 +208,12 @@ class _CaptureScreenState extends State<CaptureScreen> {
                         ),
                       ],
                     ),
-                    if (c.dtcs.isEmpty) const Text('Nenhum código de falha registrado pelo veículo.'),
+                    if (c.dtcReadsDone == 0)
+                      const Text('Códigos ainda não lidos.')
+                    else if (c.dtcs.isEmpty && c.lastDtcError != null)
+                      const Text('Não foi possível ler os códigos de falha agora.')
+                    else if (c.dtcs.isEmpty)
+                      const Text('Nenhum código de falha registrado pelo veículo.'),
                     for (final Dtc d in c.dtcs)
                       ListTile(
                         dense: true,
@@ -259,7 +267,7 @@ class _Stat extends StatelessWidget {
         padding: const EdgeInsets.all(10),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
-          mainAxisAlignment: MainAxisAlignment.center,
+          mainAxisSize: MainAxisSize.min,
           children: <Widget>[
             Text(label, style: Theme.of(context).textTheme.bodySmall),
             Text(
