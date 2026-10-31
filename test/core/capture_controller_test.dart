@@ -20,7 +20,12 @@ Future<void> waitFor(bool Function() condition, {Duration timeout = const Durati
 LinkFactory carFactory(Map<String, String> script) {
   return (String address) async {
     final ElmClient client = ElmClient(ScriptedTransport(script), defaultTimeout: const Duration(milliseconds: 60));
-    final ObdReader reader = ObdReader(client, settleAfterReset: Duration.zero);
+    final ObdReader reader = ObdReader(
+      client,
+      settleAfterReset: Duration.zero,
+      dtcTimeout: const Duration(milliseconds: 60),
+      pendingDtcTimeout: const Duration(milliseconds: 60),
+    );
     await reader.initialize();
     return ObdLink(reader: reader, close: client.close);
   };
@@ -99,6 +104,52 @@ void main() {
     await controller.stop();
 
     expect(api.dtcCodes, <String>['P0043/stored']);
+  });
+
+  test('falha na leitura de códigos de falha NÃO derruba a captura de tensão', () async {
+    final Map<String, String> script = fakeCarScript();
+    script.remove('03'); // o adaptador não responde aos códigos de falha (timeout)
+    final CaptureController controller = controllerFor(script);
+
+    await controller.start(vehicleId: 'v1', deviceAddress: 'AA:BB');
+    await waitFor(() => controller.readingsCaptured >= 8);
+    await waitFor(() => controller.lastDtcError != null);
+
+    expect(controller.status, CaptureStatus.capturing); // continua capturando
+    expect(controller.lastDtcError, isNotNull);
+    await controller.stop();
+
+    expect(controller.status, CaptureStatus.idle);
+    expect(controller.errorMessage, isNull);
+    expect(api.totalReadingsSent, controller.readingsCaptured);
+  });
+
+  test('um erro na leitura de códigos não é repetido a cada ciclo (só a cada dtcEvery)', () async {
+    final Map<String, String> script = fakeCarScript();
+    script.remove('03');
+    final CaptureController controller = controllerFor(script);
+
+    await controller.start(vehicleId: 'v1', deviceAddress: 'AA:BB');
+    await waitFor(() => controller.dtcReadsDone >= 1);
+    await waitFor(() => controller.readingsCaptured >= 6);
+    final int reads = controller.dtcReadsDone;
+    await controller.stop();
+
+    // Com dtcEvery de 80 ms e várias leituras de 60 ms de timeout, houve poucas tentativas,
+    // e nunca uma por ciclo.
+    expect(reads, lessThan(controller.readingsCaptured));
+  });
+
+  test('guarda a resposta bruta da leitura de códigos para exibir na tela', () async {
+    final CaptureController controller = controllerFor(fakeCarScript(stored: '43 01 00 43 00 00 00'));
+
+    await controller.start(vehicleId: 'v1', deviceAddress: 'AA:BB');
+    await waitFor(() => controller.dtcReadsDone >= 1);
+    await controller.stop();
+
+    expect(controller.lastDtcError, isNull);
+    expect(controller.lastDtcReadAt, isNotNull);
+    expect(controller.lastDtcRaw, contains('03 -> [43 01 00 43 00 00 00]'));
   });
 
   test('perda da conexão com o adaptador: encerra com erro, mas preserva e envia o que já capturou', () async {

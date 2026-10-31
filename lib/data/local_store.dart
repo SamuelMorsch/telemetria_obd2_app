@@ -103,6 +103,12 @@ class LocalStore implements OutboxStore, CaptureStore {
     return Sqflite.firstIntValue(await db.rawQuery('SELECT COUNT(*) FROM readings')) ?? 0;
   }
 
+  /// Códigos de falha que ainda não foram enviados ao servidor.
+  Future<int> pendingDtcCount() async {
+    final Database db = await _db;
+    return Sqflite.firstIntValue(await db.rawQuery('SELECT COUNT(*) FROM dtcs')) ?? 0;
+  }
+
   // ---------------- envio ----------------
 
   @override

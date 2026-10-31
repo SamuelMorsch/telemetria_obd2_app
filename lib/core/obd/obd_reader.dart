@@ -18,15 +18,30 @@ class ObdCapabilities {
 /// Conversa com o veículo através do [ElmClient]: inicializa o adaptador, descobre os
 /// parâmetros suportados, lê os valores de cada ciclo e os códigos de falha.
 class ObdReader {
-  ObdReader(this._elm, {this.settleAfterReset = const Duration(milliseconds: 300)});
+  ObdReader(
+    this._elm, {
+    this.settleAfterReset = const Duration(milliseconds: 300),
+    this.dtcTimeout = const Duration(seconds: 8),
+    this.pendingDtcTimeout = const Duration(seconds: 3),
+  });
 
   final ElmClient _elm;
+
+  /// Tempo máximo para a resposta aos códigos confirmados (modo 03).
+  final Duration dtcTimeout;
+
+  /// Tempo máximo para os pendentes (modo 07), que é opcional: se não responder, seguimos sem ele.
+  final Duration pendingDtcTimeout;
 
   /// Pausa depois do reset (ATZ): alguns adaptadores genéricos precisam dela.
   final Duration settleAfterReset;
 
   ObdCapabilities _capabilities = const ObdCapabilities();
   int? _lastCoolant;
+
+  /// Resposta bruta da última leitura de códigos de falha, para diagnóstico em carro real.
+  /// Ex.: `03 -> [43 00 00 00 00 00 00] | 07 -> [NO DATA]`.
+  String lastDtcRaw = '';
 
   ObdCapabilities get capabilities => _capabilities;
 
@@ -111,22 +126,30 @@ class ObdReader {
   }
 
   /// Códigos de falha: confirmados (modo 03) e pendentes (modo 07).
+  ///
+  /// O modo 03 é obrigatório: se falhar, a exceção sobe para quem chamou. O modo 07 é opcional:
+  /// vários veículos e adaptadores genéricos não o suportam (respondem erro, "?" ou ficam em silêncio),
+  /// e isso não pode invalidar a leitura dos confirmados.
   Future<List<Dtc>> readDtcs() async {
     final bool can = _capabilities.isCan;
     final List<Dtc> result = <Dtc>[];
+    lastDtcRaw = '';
 
-    final List<String> stored = await _elm.send('03', timeout: const Duration(seconds: 8));
+    final List<String> stored = await _elm.send('03', timeout: dtcTimeout);
+    lastDtcRaw = '03 -> [${stored.join(' | ')}]';
     for (final String code in parseDtcResponse(stored, mode: 3, isCan: can)) {
       result.add(Dtc(code: code, status: DtcStatus.stored));
     }
 
     try {
-      final List<String> pending = await _elm.send('07', timeout: const Duration(seconds: 8));
+      final List<String> pending = await _elm.send('07', timeout: pendingDtcTimeout);
+      lastDtcRaw = '$lastDtcRaw | 07 -> [${pending.join(' | ')}]';
       for (final String code in parseDtcResponse(pending, mode: 7, isCan: can)) {
         result.add(Dtc(code: code, status: DtcStatus.pending));
       }
-    } on ElmErrorException {
-      // Alguns veículos não suportam o modo 07: seguimos só com os confirmados.
+    } on ObdException catch (e) {
+      // Sem suporte ao modo 07 (erro ou silêncio do adaptador): seguimos só com os confirmados.
+      lastDtcRaw = '$lastDtcRaw | 07 -> falhou (${e.message})';
     }
     return result;
   }

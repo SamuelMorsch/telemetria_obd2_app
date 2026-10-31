@@ -74,6 +74,16 @@ class _CaptureScreenState extends State<CaptureScreen> {
     return '${two(t.hour)}:${two(t.minute)}:${two(t.second)}';
   }
 
+  /// Mostra o que o adaptador respondeu à última leitura de códigos de falha. Serve para saber,
+  /// no carro, se "nenhum código" é a resposta real do veículo ou um problema de comunicação.
+  String _dtcDiagnostic() {
+    final CaptureController c = _controller;
+    if (c.lastDtcReadAt == null) return 'Leitura de códigos: ainda não realizada.';
+    final String at = _time(c.lastDtcReadAt!);
+    final String error = c.lastDtcError == null ? '' : '\nERRO: ${c.lastDtcError}';
+    return 'Leitura de códigos #${c.dtcReadsDone} às $at\n${c.lastDtcRaw}$error';
+  }
+
   String _statusText() {
     switch (_controller.status) {
       case CaptureStatus.idle:
@@ -208,6 +218,8 @@ class _CaptureScreenState extends State<CaptureScreen> {
                       'A descrição de cada código aparece no painel da oficina.',
                       style: TextStyle(fontSize: 12),
                     ),
+                    const SizedBox(height: 8),
+                    Text(_dtcDiagnostic(), style: const TextStyle(fontSize: 11, fontFamily: 'monospace')),
                   ],
                 ),
               ),

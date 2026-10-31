@@ -55,6 +55,12 @@ class CaptureController extends ChangeNotifier {
   String? sessionId;
   ObdValues? latest;
   List<Dtc> dtcs = <Dtc>[];
+
+  /// Diagnóstico da leitura de códigos de falha (aparece na tela de captura).
+  int dtcReadsDone = 0;
+  DateTime? lastDtcReadAt;
+  String? lastDtcError;
+  String lastDtcRaw = '';
   int readingsCaptured = 0;
   int readingsSent = 0;
   int readingsDiscarded = 0;
@@ -141,6 +147,10 @@ class CaptureController extends ChangeNotifier {
     sessionId = null;
     latest = null;
     dtcs = <Dtc>[];
+    dtcReadsDone = 0;
+    lastDtcReadAt = null;
+    lastDtcError = null;
+    lastDtcRaw = '';
     readingsCaptured = 0;
     readingsSent = 0;
     readingsDiscarded = 0;
@@ -165,7 +175,7 @@ class CaptureController extends ChangeNotifier {
         final DateTime now = _clock();
         if (_forceDtcRead || _lastDtcAt == null || now.difference(_lastDtcAt!) >= dtcEvery) {
           _forceDtcRead = false;
-          await _readDtcs(reader, now);
+          await _readDtcsSafely(reader, now);
         }
 
         final ObdValues values = await reader.readCycle(cycle++);
@@ -198,16 +208,28 @@ class CaptureController extends ChangeNotifier {
     await _finalize(error);
   }
 
-  Future<void> _readDtcs(ObdReader reader, DateTime now) async {
-    final List<Dtc> found = await reader.readDtcs();
-    _lastDtcAt = now;
-    dtcs = found;
-    for (final Dtc dtc in found) {
-      if (_seenDtcs.add('${dtc.code}/${dtc.status.apiName}')) {
-        await store.addDtc(sessionId!, dtc, now);
+  /// Lê os códigos de falha SEM afetar a captura: um erro aqui (adaptador sem modo 07, resposta
+  /// lenta, ruído) não conta como perda de conexão e não é repetido a cada ciclo, só no próximo
+  /// intervalo. A tensão e a rotação, que são o objetivo do projeto, continuam sendo lidas.
+  Future<void> _readDtcsSafely(ObdReader reader, DateTime now) async {
+    _lastDtcAt = now; // mesmo se falhar, só tenta de novo daqui a `dtcEvery` (ou no "Ler agora")
+    try {
+      final List<Dtc> found = await reader.readDtcs();
+      dtcs = found;
+      lastDtcError = null;
+      for (final Dtc dtc in found) {
+        if (_seenDtcs.add('${dtc.code}/${dtc.status.apiName}')) {
+          await store.addDtc(sessionId!, dtc, now);
+        }
       }
+    } on ObdException catch (e) {
+      lastDtcError = e.message;
+    } finally {
+      dtcReadsDone++;
+      lastDtcReadAt = now;
+      lastDtcRaw = reader.lastDtcRaw;
+      notifyListeners();
     }
-    notifyListeners();
   }
 
   Future<void> _finalize(String? error) async {

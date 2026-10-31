@@ -23,6 +23,7 @@ class _MainScreenState extends State<MainScreen> {
   String? _vehicleId;
   BtDevice? _device;
   int _pending = 0;
+  int _pendingDtcs = 0;
   String? _error;
   bool _loading = true;
 
@@ -42,6 +43,7 @@ class _MainScreenState extends State<MainScreen> {
       final String? address = await _services.store.getValue('device_address');
       final String? name = await _services.store.getValue('device_name');
       final int pending = await _services.store.pendingReadingCount();
+      final int pendingDtcs = await _services.store.pendingDtcCount();
       List<VehicleInfo> vehicles = _vehicles;
       String? error;
       try {
@@ -58,6 +60,7 @@ class _MainScreenState extends State<MainScreen> {
         _vehicleId = vehicles.any((VehicleInfo v) => v.id == savedVehicle) ? savedVehicle : null;
         _device = address == null ? null : BtDevice(name: name ?? address, address: address, bonded: true);
         _pending = pending;
+        _pendingDtcs = pendingDtcs;
         _error = error;
         _loading = false;
       });
@@ -129,15 +132,23 @@ class _MainScreenState extends State<MainScreen> {
       ),
     );
     if (!mounted) return;
+    await _refreshPending();
+  }
+
+  Future<void> _refreshPending() async {
     final int pending = await _services.store.pendingReadingCount();
-    if (mounted) setState(() => _pending = pending);
+    final int pendingDtcs = await _services.store.pendingDtcCount();
+    if (!mounted) return;
+    setState(() {
+      _pending = pending;
+      _pendingDtcs = pendingDtcs;
+    });
   }
 
   Future<void> _syncNow() async {
     final SyncResult result = await _services.syncer.syncOnce();
-    final int pending = await _services.store.pendingReadingCount();
+    await _refreshPending();
     if (!mounted) return;
-    setState(() => _pending = pending);
     if (result.stoppedBy == SyncStop.unauthorized) {
       _snack('Seu login expirou. Entre de novo para enviar.');
       await _services.logout();
@@ -239,8 +250,20 @@ class _MainScreenState extends State<MainScreen> {
                   const SizedBox(height: 24),
                   Card(
                     child: ListTile(
-                      title: Text('$_pending leituras aguardando envio'),
-                      subtitle: const Text('Ficam guardadas no celular até o servidor confirmar o recebimento.'),
+                      leading: Icon(
+                        _pending + _pendingDtcs == 0 ? Icons.cloud_done : Icons.cloud_upload,
+                        color: _pending + _pendingDtcs == 0 ? Colors.green : null,
+                      ),
+                      title: Text(
+                        _pending + _pendingDtcs == 0
+                            ? 'Tudo enviado'
+                            : '$_pending leituras e $_pendingDtcs códigos de falha aguardando envio',
+                      ),
+                      subtitle: Text(
+                        _pending + _pendingDtcs == 0
+                            ? 'Nada pendente no celular: o que foi capturado já está no painel da oficina.'
+                            : 'Ficam guardados no celular até o servidor confirmar o recebimento.',
+                      ),
                       trailing: OutlinedButton(onPressed: _syncNow, child: const Text('Enviar agora')),
                     ),
                   ),

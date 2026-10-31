@@ -139,6 +139,30 @@ void main() {
       expect(await reader.readDtcs(), <Dtc>[const Dtc(code: 'P0043', status: DtcStatus.stored)]);
     });
 
+    test('adaptador que fica em silêncio no modo 07 (timeout) segue só com os confirmados', () async {
+      final Map<String, String> script = fakeCarScript(stored: '43 01 00 43 00 00 00');
+      script.remove('07'); // sem resposta combinada = silêncio = timeout
+      final ObdReader reader = ObdReader(
+        ElmClient(ScriptedTransport(script)),
+        settleAfterReset: Duration.zero,
+        dtcTimeout: const Duration(milliseconds: 80),
+        pendingDtcTimeout: const Duration(milliseconds: 80),
+      );
+      await reader.initialize();
+
+      expect(await reader.readDtcs(), <Dtc>[const Dtc(code: 'P0043', status: DtcStatus.stored)]);
+      expect(reader.lastDtcRaw, contains('07 -> falhou'));
+    });
+
+    test('guarda a resposta bruta da última leitura para diagnóstico', () async {
+      final ObdReader reader = readerFor(fakeCarScript(stored: '43 01 00 43 00 00 00'));
+      await reader.initialize();
+      await reader.readDtcs();
+
+      expect(reader.lastDtcRaw, contains('03 -> [43 01 00 43 00 00 00]'));
+      expect(reader.lastDtcRaw, contains('07 -> [NO DATA]'));
+    });
+
     test('apagar códigos envia o serviço 04', () async {
       final ScriptedTransport transport = ScriptedTransport(fakeCarScript());
       final ObdReader reader = ObdReader(ElmClient(transport), settleAfterReset: Duration.zero);
