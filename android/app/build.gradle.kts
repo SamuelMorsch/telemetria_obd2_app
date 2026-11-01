@@ -25,6 +25,12 @@ android {
         versionName = flutter.versionName
     }
 
+    // Remove os metadados de dependências que o Google Play lê. Este app não é distribuído pela
+    // Play Store, e essa tarefa (sdkReleaseDependencyData) quebrava o build de release.
+    dependenciesInfo {
+        includeInApk = false
+        includeInBundle = false
+    }
     buildTypes {
         release {
             // TODO: Add your own signing config for the release build.
