@@ -1,7 +1,11 @@
 import 'package:flutter/material.dart';
-import 'home_screen.dart';
+
+import 'app_services.dart';
+import 'screens/login_screen.dart';
+import 'screens/main_screen.dart';
 
 void main() {
+  WidgetsFlutterBinding.ensureInitialized();
   runApp(const TelemetriaApp());
 }
 
@@ -11,27 +15,43 @@ class TelemetriaApp extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
-      title: 'Telemetria OBD-II',
-      debugShowCheckedModeBanner: false, // Tira a faixa de "Debug"
-      theme: ThemeData(
-        brightness: Brightness.dark, // Ativa o Dark Mode base
-        scaffoldBackgroundColor: const Color(0xFF0F172A), // Fundo azul bem escuro (Slate 900)
-        primaryColor: const Color(0xFF38BDF8), // Azul ciano moderno
-        appBarTheme: const AppBarTheme(
-          backgroundColor: Color(0xFF0F172A),
-          elevation: 0, // Tira a sombra dura
-          centerTitle: true,
-          iconTheme: IconThemeData(color: Color(0xFF38BDF8)),
-          titleTextStyle: TextStyle(
-            color: Colors.white,
-            fontSize: 20,
-            fontWeight: FontWeight.bold,
-            letterSpacing: 1.2,
-          ),
-        ),
-        useMaterial3: true,
-      ),
-      home: const HomeScreen(),
+      title: 'Telemetria Automotiva',
+      debugShowCheckedModeBanner: false,
+      theme: ThemeData(colorSchemeSeed: Colors.blue, useMaterial3: true),
+      darkTheme: ThemeData(colorSchemeSeed: Colors.blue, useMaterial3: true, brightness: Brightness.dark),
+      home: const AppRoot(),
+    );
+  }
+}
+
+/// Decide entre a tela de login e a principal, conforme haja ou não uma conta conectada.
+class AppRoot extends StatefulWidget {
+  const AppRoot({super.key});
+
+  @override
+  State<AppRoot> createState() => _AppRootState();
+}
+
+class _AppRootState extends State<AppRoot> {
+  late final Future<void> _init = AppServices.instance.init();
+
+  @override
+  Widget build(BuildContext context) {
+    return FutureBuilder<void>(
+      future: _init,
+      builder: (BuildContext context, AsyncSnapshot<void> snapshot) {
+        if (snapshot.connectionState != ConnectionState.done) {
+          return const Scaffold(body: Center(child: CircularProgressIndicator()));
+        }
+        if (snapshot.hasError) {
+          return Scaffold(body: Center(child: Text('Erro ao iniciar o app: ${snapshot.error}')));
+        }
+        return ListenableBuilder(
+          listenable: AppServices.instance,
+          builder: (BuildContext context, Widget? child) =>
+              AppServices.instance.isLoggedIn ? const MainScreen() : const LoginScreen(),
+        );
+      },
     );
   }
 }
