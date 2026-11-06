@@ -2,7 +2,7 @@ name: CI - App Android
 
 on:
   push:
-    branches: [main, v2]
+    branches: [main]
   pull_request:
     branches: [main]
 
@@ -17,10 +17,12 @@ concurrency:
 jobs:
   qualidade:
     name: Análise estática e testes
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
-      - name: Checkout do código
-        uses: actions/checkout@v4
+      - name: Checkout do código (histórico completo, exigido pelo SonarQube Cloud)
+        uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
 
       - name: Flutter 3.44.0 (mesma versão do desenvolvimento)
         uses: subosito/flutter-action@v2
@@ -41,8 +43,13 @@ jobs:
       - name: Testes automatizados (com cobertura)
         run: flutter test --coverage
 
-      - name: Guardar cobertura (usada depois pelo SonarCloud)
-        uses: actions/upload-artifact@v4
+      - name: Análise SonarQube Cloud
+        uses: SonarSource/sonarqube-scan-action@v8
+        env:
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+
+      - name: Guardar cobertura
+        uses: actions/upload-artifact@v5
         with:
           name: cobertura-lcov
           path: coverage/lcov.info
@@ -52,14 +59,14 @@ jobs:
     name: Compilar APK
     needs: qualidade
     if: github.event_name == 'push'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - name: Checkout do código
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       # AGP 9 e Gradle 9 exigem JDK 17 ou superior.
       - name: Java 17
-        uses: actions/setup-java@v4
+        uses: actions/setup-java@v5
         with:
           distribution: temurin
           java-version: "17"
@@ -78,7 +85,7 @@ jobs:
         run: flutter build apk --release
 
       - name: Guardar o APK gerado
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v5
         with:
           name: app-release
           path: build/app/outputs/flutter-apk/app-release.apk
