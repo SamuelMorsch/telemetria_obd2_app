@@ -21,6 +21,21 @@ oficina, em tempo real, **mesmo quando o sinal do celular some e volta** durante
 - Lê os códigos de falha confirmados e pendentes e mostra o resultado na tela.
 - Mostra o que ainda está pendente de envio ("Tudo enviado" quando não há nada).
 
+## Telas
+
+<table>
+  <tr>
+    <td align="center"><img src="docs/img/app-login.png" width="260" alt="Tela de login do app"></td>
+    <td align="center"><img src="docs/img/app-principal.png" width="260" alt="Tela principal: escolha do veículo e do adaptador OBD-II e botão Iniciar captura"></td>
+  </tr>
+  <tr>
+    <td align="center"><b>Login</b><br>com a conta da oficina</td>
+    <td align="center"><b>Tela principal</b><br>veículo, adaptador e captura</td>
+  </tr>
+</table>
+
+> Dados de veículos reais e o endereço do adaptador foram ocultados nas imagens.
+
 ## Como funciona
 
 ```mermaid
