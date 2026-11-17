@@ -18,6 +18,7 @@ oficina, em tempo real, **mesmo quando o sinal do celular some e volta** durante
 - Conecta ao adaptador OBD-II e lê os dados do carro ligado, cerca de **2,5 leituras por segundo**.
 - Grava cada leitura no celular **antes** de enviar e só apaga depois que o servidor confirma.
 - Continua capturando sem internet e retoma o envio sozinho quando o sinal volta.
+- Se o **Bluetooth cair**, reconecta sozinho e continua **na mesma sessão** (desiste após 5 minutos sem nenhuma leitura).
 - Lê os códigos de falha confirmados e pendentes e mostra o resultado na tela.
 - Mostra o que ainda está pendente de envio ("Tudo enviado" quando não há nada).
 
@@ -106,6 +107,13 @@ Tudo é gravado num banco SQLite local antes de ser enviado, em lotes. Erros do 
 ações: login expirado (pede novo login e preserva os dados), falha temporária (tenta de novo depois
 e preserva os dados) e recusa definitiva (descarta só o item inválido).
 
+### Queda do Bluetooth
+Com o carro em movimento o link com o adaptador pode cair. O app percebe na hora, mostra
+"Reconectando…" e tenta de novo, com esperas crescentes (2, 4, 8 e depois 15 segundos), **sem encerrar a
+sessão**: as leituras continuam numeradas, o envio da fila segue e nada se repete. Se ficar 5 minutos sem
+nenhuma leitura, a captura termina e a sessão fecha no horário da última leitura recebida. O
+funcionamento está na [ADR 0004](docs/adr/0004-reconexao-automatica-do-bluetooth.md).
+
 > O SQLite aqui é só a **fila local do celular**. O banco do sistema é o PostgreSQL com TimescaleDB
 > da API, e as diretrizes do curso permitem persistência local no dispositivo para o modo offline.
 
@@ -156,7 +164,7 @@ e compila o APK.
 
 ## Limitações conhecidas e próximos passos
 - **A captura exige a tela ligada.** Ainda não há serviço em primeiro plano para capturar com a tela apagada.
-- **Sem reconexão automática do Bluetooth:** se o adaptador se desconectar, é preciso reiniciar a captura.
+- **A reconexão automática do Bluetooth** foi verificada em testes automatizados; a validação com o adaptador em um carro real está pendente.
 - **Códigos de falha só do OBD-II padrão** (motor, câmbio e emissões). Falhas de freios, airbag e
   carroceria exigem protocolos de cada montadora e ficam de fora.
 - Só Android. A comunicação com o adaptador usa Bluetooth clássico, que o iOS não oferece.
@@ -169,6 +177,7 @@ e compila o APK.
 | [0001](docs/adr/0001-app-nucleo-testavel-fila-local-e-bluetooth-isolado.md) | Núcleo testável em Dart puro, fila local e Bluetooth isolado |
 | [0002](docs/adr/0002-plugin-bluetooth-mantido-no-repositorio.md) | Plugin Bluetooth mantido no repositório |
 | [0003](docs/adr/0003-leitura-de-codigos-de-falha-isolada-da-captura.md) | Leitura de códigos de falha isolada da captura de tensão |
+| [0004](docs/adr/0004-reconexao-automatica-do-bluetooth.md) | Reconexão automática do Bluetooth durante a captura |
 
 ## Estrutura do código
 | Pasta | O que há nela |

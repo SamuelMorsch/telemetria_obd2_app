@@ -1,7 +1,10 @@
+import 'dart:async';
+
 import 'package:flutter_test/flutter_test.dart';
 import 'package:telemetria_obd2_app/capture/capture_controller.dart';
 import 'package:telemetria_obd2_app/core/models.dart';
 import 'package:telemetria_obd2_app/core/obd/elm_client.dart';
+import 'package:telemetria_obd2_app/core/obd/obd_exceptions.dart';
 import 'package:telemetria_obd2_app/core/obd/obd_reader.dart';
 import 'package:telemetria_obd2_app/core/sync/outbox.dart';
 import 'package:telemetria_obd2_app/core/sync/outbox_syncer.dart';
@@ -31,6 +34,27 @@ LinkFactory carFactory(Map<String, String> script) {
   };
 }
 
+/// Conexão que "funciona" nas [works] primeiras chamadas e depois recusa, como um adaptador que
+/// saiu do alcance. Guarda os transportes criados, para o teste poder derrubar o Bluetooth.
+LinkFactory flakyFactory(Map<String, String> script, List<ScriptedTransport> transports, {required int works}) {
+  int calls = 0;
+  return (String address) async {
+    calls++;
+    if (calls > works) throw ObdConnectionException('sem sinal do adaptador');
+    final ScriptedTransport transport = ScriptedTransport(script);
+    transports.add(transport);
+    final ElmClient client = ElmClient(transport, defaultTimeout: const Duration(milliseconds: 60));
+    final ObdReader reader = ObdReader(
+      client,
+      settleAfterReset: Duration.zero,
+      dtcTimeout: const Duration(milliseconds: 60),
+      pendingDtcTimeout: const Duration(milliseconds: 60),
+    );
+    await reader.initialize();
+    return ObdLink(reader: reader, close: client.close);
+  };
+}
+
 void main() {
   late MemoryCapture store;
   late FakeApi api;
@@ -42,6 +66,10 @@ void main() {
       linkFactory: factory ?? carFactory(script),
       syncEvery: const Duration(milliseconds: 20),
       dtcEvery: const Duration(milliseconds: 80),
+      reconnectBackoff: const Duration(milliseconds: 10),
+      reconnectMaxBackoff: const Duration(milliseconds: 30),
+      reconnectAttemptTimeout: const Duration(milliseconds: 150),
+      reconnectGiveUpAfter: const Duration(milliseconds: 600),
       idGenerator: () => 'sessao-teste',
     );
   }
@@ -150,6 +178,100 @@ void main() {
     expect(controller.lastDtcError, isNull);
     expect(controller.lastDtcReadAt, isNotNull);
     expect(controller.lastDtcRaw, contains('03 -> [43 01 00 43 00 00 00]'));
+  });
+
+  test('o Bluetooth cai no meio da captura: reconecta sozinho e continua a mesma sessão', () async {
+    final Map<String, String> script = fakeCarScript();
+    final List<ScriptedTransport> transports = <ScriptedTransport>[];
+    final CaptureController controller = controllerFor(script, factory: flakyFactory(script, transports, works: 2));
+
+    await controller.start(vehicleId: 'v1', deviceAddress: 'AA:BB');
+    await waitFor(() => controller.readingsCaptured >= 3);
+    final int antes = controller.readingsCaptured;
+
+    await transports.first.close(); // o Bluetooth cai
+    await waitFor(() => controller.reconnections == 1);
+    await waitFor(() => controller.readingsCaptured >= antes + 3);
+    await controller.stop();
+
+    expect(transports.length, 2);
+    expect(controller.status, CaptureStatus.idle);
+    expect(controller.errorMessage, isNull);
+    expect(controller.reconnecting, isFalse);
+    expect(api.opened, <String>['sessao-teste']); // continuou a mesma sessão
+    final List<int> seqs = api.readingBatches.expand((List<int> b) => b).toList();
+    expect(seqs, List<int>.generate(seqs.length, (int i) => i)); // sem buracos nem repetições
+    expect(seqs.length, controller.readingsCaptured);
+    expect(api.ended, <String>['sessao-teste']);
+  });
+
+  test('parar durante a reconexão encerra normalmente, sem erro', () async {
+    final Map<String, String> script = fakeCarScript();
+    final List<ScriptedTransport> transports = <ScriptedTransport>[];
+    final CaptureController controller = controllerFor(script, factory: flakyFactory(script, transports, works: 1));
+
+    await controller.start(vehicleId: 'v1', deviceAddress: 'AA:BB');
+    await waitFor(() => controller.readingsCaptured >= 3);
+    await transports.first.close();
+    await waitFor(() => controller.reconnecting);
+    await controller.stop();
+
+    expect(controller.status, CaptureStatus.idle);
+    expect(controller.errorMessage, isNull);
+    expect(controller.reconnecting, isFalse);
+    expect(api.ended, <String>['sessao-teste']);
+  });
+
+  test('sem conseguir reconectar a tempo, encerra com erro e a sessão termina na última leitura', () async {
+    final Map<String, String> script = fakeCarScript();
+    final List<ScriptedTransport> transports = <ScriptedTransport>[];
+    final CaptureController controller = controllerFor(script, factory: flakyFactory(script, transports, works: 1));
+
+    await controller.start(vehicleId: 'v1', deviceAddress: 'AA:BB');
+    await waitFor(() => controller.readingsCaptured >= 3);
+    await transports.first.close();
+    await waitFor(() => controller.status == CaptureStatus.error);
+
+    expect(controller.errorMessage, contains('perdida'));
+    expect(controller.reconnecting, isFalse);
+    expect(store.sessions['sessao-teste']!.endedAt, controller.lastReadingAt);
+    expect(api.ended, <String>['sessao-teste']);
+    expect(controller.pendingReadings, 0); // nada se perde
+    expect(api.totalReadingsSent, controller.readingsCaptured);
+  });
+
+  test('tentativa de conexão que trava e termina tarde é fechada, sem deixar a conexão aberta', () async {
+    final Map<String, String> script = fakeCarScript();
+    final List<ScriptedTransport> transports = <ScriptedTransport>[];
+    final LinkFactory good = flakyFactory(script, transports, works: 99);
+    final Completer<ObdLink> hung = Completer<ObdLink>();
+    bool lateClosed = false;
+    int calls = 0;
+    Future<ObdLink> factory(String address) {
+      calls++;
+      if (calls == 2) return hung.future; // a 1ª tentativa de reconexão trava
+      return good(address);
+    }
+
+    final CaptureController controller = controllerFor(script, factory: factory);
+
+    await controller.start(vehicleId: 'v1', deviceAddress: 'AA:BB');
+    await waitFor(() => controller.readingsCaptured >= 3);
+    await transports.first.close();
+    await waitFor(() => controller.reconnections == 1); // a 2ª tentativa deu certo
+
+    final ObdLink late = await carFactory(script)('AA:BB');
+    hung.complete(ObdLink(
+      reader: late.reader,
+      close: () async {
+        lateClosed = true;
+        await late.close();
+      },
+    ));
+    await waitFor(() => lateClosed);
+    await controller.stop();
+
+    expect(controller.errorMessage, isNull);
   });
 
   test('perda da conexão com o adaptador: encerra com erro, mas preserva e envia o que já capturou', () async {

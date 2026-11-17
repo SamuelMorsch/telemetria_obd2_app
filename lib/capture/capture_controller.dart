@@ -37,6 +37,10 @@ class CaptureController extends ChangeNotifier {
     this.syncEvery = const Duration(seconds: 5),
     this.dtcEvery = const Duration(seconds: 30),
     this.maxConsecutiveFailures = 3,
+    this.reconnectBackoff = const Duration(seconds: 2),
+    this.reconnectMaxBackoff = const Duration(seconds: 15),
+    this.reconnectAttemptTimeout = const Duration(seconds: 25),
+    this.reconnectGiveUpAfter = const Duration(minutes: 5),
   })  : _clock = clock ?? DateTime.now,
         _newId = idGenerator ?? generateUuidV4;
 
@@ -47,6 +51,16 @@ class CaptureController extends ChangeNotifier {
   final Duration syncEvery;
   final Duration dtcEvery;
   final int maxConsecutiveFailures;
+
+  /// Espera antes da primeira nova tentativa de conexão; dobra a cada falha, até [reconnectMaxBackoff].
+  final Duration reconnectBackoff;
+  final Duration reconnectMaxBackoff;
+
+  /// Tempo máximo de uma tentativa de conexão (o Bluetooth pode ficar esperando por muito tempo).
+  final Duration reconnectAttemptTimeout;
+
+  /// Sem nenhuma leitura por este tempo, a captura desiste e encerra com erro.
+  final Duration reconnectGiveUpAfter;
   final DateTime Function() _clock;
   final String Function() _newId;
 
@@ -69,7 +83,19 @@ class CaptureController extends ChangeNotifier {
   DateTime? lastSyncAt;
   String? lastSyncError;
 
+  /// Reconexão automática do Bluetooth. `reconnecting` fica ligado enquanto o app tenta voltar.
+  bool reconnecting = false;
+  int reconnectAttempts = 0;
+  int reconnections = 0;
+  DateTime? lastReconnectAt;
+  String? lastLinkError;
+
   ObdLink? _link;
+  String? _deviceAddress;
+  DateTime? _lastReadingAt;
+  String? _reconnectFailure;
+  final Stopwatch _sinceLastReading = Stopwatch();
+  Completer<void> _stopSignal = Completer<void>();
   Future<void>? _loop;
   bool _syncing = false;
   bool _forceDtcRead = false;
@@ -84,6 +110,9 @@ class CaptureController extends ChangeNotifier {
     return pending < 0 ? 0 : pending;
   }
 
+  /// Horário da última leitura gravada (mostra a "idade" dos valores durante uma reconexão).
+  DateTime? get lastReadingAt => _lastReadingAt;
+
   bool get isActive =>
       status == CaptureStatus.connecting || status == CaptureStatus.capturing || status == CaptureStatus.stopping;
 
@@ -96,6 +125,7 @@ class CaptureController extends ChangeNotifier {
   }) async {
     if (isActive) return;
     _reset();
+    _deviceAddress = deviceAddress;
     status = CaptureStatus.connecting;
     notifyListeners();
 
@@ -123,6 +153,9 @@ class CaptureController extends ChangeNotifier {
     _clockWatch
       ..reset()
       ..start();
+    _sinceLastReading
+      ..reset()
+      ..start();
     notifyListeners();
     _loop = _run();
   }
@@ -131,6 +164,7 @@ class CaptureController extends ChangeNotifier {
   Future<void> stop() async {
     if (status != CaptureStatus.capturing) return;
     status = CaptureStatus.stopping;
+    if (!_stopSignal.isCompleted) _stopSignal.complete();
     notifyListeners();
     await _loop;
   }
@@ -162,13 +196,22 @@ class CaptureController extends ChangeNotifier {
     _lastDtcAt = null;
     _seenDtcs.clear();
     _forceDtcRead = false;
+    reconnecting = false;
+    reconnectAttempts = 0;
+    reconnections = 0;
+    lastReconnectAt = null;
+    lastLinkError = null;
+    _lastReadingAt = null;
+    _reconnectFailure = null;
+    _stopSignal = Completer<void>();
   }
 
   Future<void> _run() async {
-    final ObdReader reader = _link!.reader;
+    ObdReader reader = _link!.reader;
     int cycle = 0;
     int failures = 0;
     String? error;
+    DateTime? endedAt;
 
     while (status == CaptureStatus.capturing) {
       try {
@@ -179,9 +222,14 @@ class CaptureController extends ChangeNotifier {
         }
 
         final ObdValues values = await reader.readCycle(cycle++);
-        final Reading reading = Reading(seq: _seq++, time: _clock(), values: values);
+        final DateTime readAt = _clock();
+        final Reading reading = Reading(seq: _seq++, time: readAt, values: values);
         await store.addReading(sessionId!, reading);
         latest = values;
+        _lastReadingAt = readAt;
+        _sinceLastReading
+          ..reset()
+          ..start();
         readingsCaptured++;
         failures = 0;
         final int ms = _clockWatch.elapsedMilliseconds;
@@ -189,24 +237,143 @@ class CaptureController extends ChangeNotifier {
         notifyListeners();
       } on ObdException catch (e) {
         failures++;
-        if (failures >= maxConsecutiveFailures) {
-          error = 'Conexão com o adaptador perdida (${e.message}).';
-          break;
+        lastLinkError = e.message;
+        // Bluetooth caído = reconecta já. Outras falhas (adaptador mudo, ignição desligada) só depois
+        // de algumas seguidas, para não reagir a um tropeço isolado.
+        if (failures >= maxConsecutiveFailures || e is ObdConnectionException) {
+          final ObdReader? fresh = await _reconnect();
+          if (fresh != null) {
+            reader = fresh;
+            failures = 0;
+          } else if (_reconnectFailure != null) {
+            error = _reconnectFailure;
+            endedAt = _lastReadingAt; // a sessão termina quando chegou a última leitura, não depois
+            break;
+          }
         }
       } catch (e) {
         error = 'Erro inesperado na captura: $e';
         break;
       }
 
-      final DateTime? last = lastSyncAt;
-      if (!_syncing && (last == null || _clock().difference(last) >= syncEvery)) {
-        unawaited(_sync());
-      }
+      _maybeSync();
       await Future<void>.delayed(Duration.zero); // cede a vez para a tela e para o envio
     }
 
-    await _finalize(error);
+    await _finalize(error, endedAt: endedAt);
   }
+
+  void _maybeSync() {
+    final DateTime? last = lastSyncAt;
+    if (!_syncing && (last == null || _clock().difference(last) >= syncEvery)) {
+      unawaited(_sync());
+    }
+  }
+
+  /// Recupera a conexão com o adaptador sem encerrar a sessão: fecha o que sobrou da conexão
+  /// antiga e tenta abrir outra, com esperas crescentes entre as tentativas. Devolve o novo leitor,
+  /// ou `null` se o usuário parou a captura ou se passou tempo demais sem nenhuma leitura
+  /// (nesse caso [_reconnectFailure] explica).
+  Future<ObdReader?> _reconnect() async {
+    _reconnectFailure = null;
+    final ObdLink? old = _link;
+    _link = null;
+    if (old != null) await _closeQuietly(old);
+
+    reconnecting = true;
+    reconnectAttempts = 0;
+    notifyListeners();
+
+    Duration wait = reconnectBackoff;
+    while (status == CaptureStatus.capturing) {
+      if (_sinceLastReading.elapsed >= reconnectGiveUpAfter) {
+        _reconnectFailure = 'Conexão com o adaptador perdida: sem leituras há '
+            '${_describe(reconnectGiveUpAfter)} e a reconexão não funcionou.';
+        break;
+      }
+      await _waitWhileCapturing(wait);
+      if (status != CaptureStatus.capturing) break;
+
+      reconnectAttempts++;
+      notifyListeners();
+      final ObdLink? link = await _tryConnect();
+      if (link == null) {
+        wait = wait * 2 > reconnectMaxBackoff ? reconnectMaxBackoff : wait * 2;
+        continue;
+      }
+      if (status != CaptureStatus.capturing) {
+        await _closeQuietly(link);
+        break;
+      }
+
+      _link = link;
+      reconnecting = false;
+      reconnections++;
+      lastReconnectAt = _clock();
+      lastLinkError = null;
+      notifyListeners();
+      return link.reader;
+    }
+
+    reconnecting = false;
+    notifyListeners();
+    return null;
+  }
+
+  /// Uma tentativa de conexão. Se ela travar além do limite, ou se o usuário parar a captura,
+  /// é abandonada; e se terminar depois disso, a conexão que abriu é fechada para não ficar vazando.
+  Future<ObdLink?> _tryConnect() async {
+    final Completer<ObdLink?> result = Completer<ObdLink?>();
+
+    unawaited(
+      linkFactory(_deviceAddress!).then<void>((ObdLink link) {
+        if (result.isCompleted) {
+          unawaited(_closeQuietly(link)); // chegou tarde demais
+        } else {
+          result.complete(link);
+        }
+      }, onError: (Object e) {
+        lastLinkError = e is ObdException ? e.message : '$e';
+        if (!result.isCompleted) result.complete(null);
+      }),
+    );
+
+    final Timer timer = Timer(reconnectAttemptTimeout, () {
+      if (!result.isCompleted) {
+        lastLinkError = 'A tentativa de conexão demorou demais';
+        result.complete(null);
+      }
+    });
+    unawaited(_stopSignal.future.then<void>((_) {
+      if (!result.isCompleted) result.complete(null);
+    }));
+
+    final ObdLink? link = await result.future;
+    timer.cancel();
+    return link;
+  }
+
+  /// Espera sem travar a parada: acorda em passos curtos e já aproveita para enviar a fila.
+  Future<void> _waitWhileCapturing(Duration total) async {
+    const Duration step = Duration(milliseconds: 100);
+    final Stopwatch watch = Stopwatch()..start();
+    while (status == CaptureStatus.capturing && watch.elapsed < total) {
+      final Duration left = total - watch.elapsed;
+      await Future<void>.delayed(left < step ? left : step);
+      _maybeSync();
+    }
+  }
+
+  Future<void> _closeQuietly(ObdLink link) async {
+    try {
+      // Numa conexão morta o fechamento pode ficar pendurado; não deixa isso travar a reconexão.
+      await link.close().timeout(const Duration(seconds: 3));
+    } catch (_) {
+      // já estava desconectado
+    }
+  }
+
+  String _describe(Duration d) => d >= const Duration(minutes: 1) ? '${d.inMinutes} min' : '${d.inSeconds} s';
 
   /// Lê os códigos de falha SEM afetar a captura: um erro aqui (adaptador sem modo 07, resposta
   /// lenta, ruído) não conta como perda de conexão e não é repetido a cada ciclo, só no próximo
@@ -232,22 +399,18 @@ class CaptureController extends ChangeNotifier {
     }
   }
 
-  Future<void> _finalize(String? error) async {
+  Future<void> _finalize(String? error, {DateTime? endedAt}) async {
     final ObdLink? link = _link;
     _link = null;
     final String? id = sessionId;
-    if (id != null) await store.endSession(id, _clock());
+    if (id != null) await store.endSession(id, endedAt ?? _clock());
 
     while (_syncing) {
       await Future<void>.delayed(const Duration(milliseconds: 10));
     }
     await _sync();
 
-    try {
-      await link?.close();
-    } catch (_) {
-      // já estava desconectado
-    }
+    if (link != null) await _closeQuietly(link);
     status = error == null ? CaptureStatus.idle : CaptureStatus.error;
     errorMessage = error;
     notifyListeners();
