@@ -91,7 +91,9 @@ class _CaptureScreenState extends State<CaptureScreen> {
       case CaptureStatus.connecting:
         return 'Conectando ao adaptador…';
       case CaptureStatus.capturing:
-        return 'Capturando';
+        return _controller.reconnecting
+            ? 'Reconectando… (tentativa ${_controller.reconnectAttempts})'
+            : 'Capturando';
       case CaptureStatus.stopping:
         return 'Encerrando e enviando…';
       case CaptureStatus.error:
@@ -118,7 +120,9 @@ class _CaptureScreenState extends State<CaptureScreen> {
   Widget build(BuildContext context) {
     final CaptureController c = _controller;
     final ObdValues? v = c.latest;
-    final bool lowVoltage = v != null &&
+    // Durante a reconexão os valores na tela são antigos: não alertar em cima deles.
+    final bool lowVoltage = !c.reconnecting &&
+        v != null &&
         v.batteryVoltage != null &&
         v.rpm != null &&
         v.rpm! >= 700 &&
@@ -138,8 +142,12 @@ class _CaptureScreenState extends State<CaptureScreen> {
               children: <Widget>[
                 Chip(
                   avatar: Icon(
-                    c.status == CaptureStatus.capturing ? Icons.fiber_manual_record : Icons.circle_outlined,
-                    color: c.status == CaptureStatus.capturing ? Colors.green : null,
+                    c.reconnecting
+                        ? Icons.sync_problem
+                        : (c.status == CaptureStatus.capturing ? Icons.fiber_manual_record : Icons.circle_outlined),
+                    color: c.reconnecting
+                        ? Colors.orange
+                        : (c.status == CaptureStatus.capturing ? Colors.green : null),
                     size: 16,
                   ),
                   label: Text(_statusText()),
@@ -148,6 +156,27 @@ class _CaptureScreenState extends State<CaptureScreen> {
                 Expanded(child: Text(widget.device.name, overflow: TextOverflow.ellipsis)),
               ],
             ),
+            if (c.reconnecting)
+              Card(
+                color: Colors.orange.shade100,
+                child: Padding(
+                  padding: const EdgeInsets.all(12),
+                  child: Text(
+                    'A conexão com o adaptador caiu. Reconectando sozinho; a captura continua na mesma sessão. '
+                    '${c.lastReadingAt == null ? '' : 'Os valores abaixo são da última leitura, às ${_time(c.lastReadingAt!)}. '}'
+                    '${c.lastLinkError == null ? '' : 'Motivo: ${c.lastLinkError}.'}',
+                    style: TextStyle(color: Colors.orange.shade900, fontWeight: FontWeight.bold),
+                  ),
+                ),
+              ),
+            if (c.reconnections > 0 && !c.reconnecting)
+              Padding(
+                padding: const EdgeInsets.only(top: 4),
+                child: Text(
+                  'Reconexões nesta captura: ${c.reconnections} (a última às ${_time(c.lastReconnectAt!)}).',
+                  style: Theme.of(context).textTheme.bodySmall,
+                ),
+              ),
             if (c.status == CaptureStatus.error && c.errorMessage != null)
               Card(
                 color: Theme.of(context).colorScheme.errorContainer,

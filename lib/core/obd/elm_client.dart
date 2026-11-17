@@ -9,7 +9,7 @@ import 'obd_transport.dart';
 /// Um comando por vez.
 class ElmClient {
   ElmClient(this._transport, {this.defaultTimeout = const Duration(seconds: 3)}) {
-    _subscription = _transport.input.listen(_onData);
+    _subscription = _transport.input.listen(_onData, onDone: _onClosed, onError: (Object _) => _onClosed());
   }
 
   final ObdTransport _transport;
@@ -19,6 +19,20 @@ class ElmClient {
   late final StreamSubscription<List<int>> _subscription;
   final StringBuffer _buffer = StringBuffer();
   Completer<String>? _pending;
+  bool _closed = false;
+
+  /// O canal terminou (o Bluetooth caiu). Quem espera uma resposta é avisado na hora, e os próximos
+  /// comandos falham sem esperar o tempo limite.
+  void _onClosed() {
+    _closed = true;
+    final Completer<String>? pending = _pending;
+    _pending = null;
+    if (pending != null && !pending.isCompleted) {
+      pending.completeError(ObdConnectionException(_closedMessage));
+    }
+  }
+
+  static const String _closedMessage = 'A conexão Bluetooth com o adaptador foi encerrada';
 
   void _onData(List<int> data) {
     _buffer.write(latin1.decode(data, allowInvalid: true));
@@ -37,18 +51,26 @@ class ElmClient {
   }
 
   /// Envia [command] e devolve as linhas da resposta, sem eco nem prompt.
-  /// Lança [ElmTimeoutException] se não houver resposta, e [ElmErrorException] em erro grave.
-  /// "NO DATA" não lança: vem nas linhas (veja `isNoData`).
+  /// Lança [ElmTimeoutException] se não houver resposta, [ElmErrorException] em erro grave e
+  /// [ObdConnectionException] se o Bluetooth caiu. "NO DATA" não lança: vem nas linhas (veja `isNoData`).
   Future<List<String>> send(String command, {Duration? timeout}) async {
+    if (_closed) throw ObdConnectionException(_closedMessage);
     if (_pending != null) {
       throw StateError('Já existe um comando em andamento');
     }
     _buffer.clear();
     final Completer<String> completer = Completer<String>();
     _pending = completer;
+    final Future<String> response = completer.future.timeout(timeout ?? defaultTimeout);
+    response.ignore(); // se a conexão cair durante a escrita, o erro é entregue abaixo, sem aviso solto
     try {
-      await _transport.write(latin1.encode('$command\r'));
-      final String raw = await completer.future.timeout(timeout ?? defaultTimeout);
+      try {
+        await _transport.write(latin1.encode('$command\r')).timeout(timeout ?? defaultTimeout);
+      } catch (e) {
+        // Escrever num Bluetooth desconectado lança um erro da biblioteca (ou fica pendurado), que não é do tipo OBD.
+        throw ObdConnectionException('Falha ao enviar o comando $command ao adaptador: $e');
+      }
+      final String raw = await response;
       final List<String> lines = cleanLines(raw, command: command);
       final String? error = fatalError(lines);
       if (error != null) throw ElmErrorException(command, error);

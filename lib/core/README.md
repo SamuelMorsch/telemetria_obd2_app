@@ -6,7 +6,7 @@ Código **puro Dart**, sem Flutter, testável com `flutter test` sem celular nem
 |---|---|
 | `models.dart` | `ObdValues`, `Reading` (com `toApiJson`) e `Dtc` |
 | `obd/elm_parser.dart` | Decodifica as respostas do ELM327: tensão, PIDs e códigos de falha (CAN e legado, mensagens longas, várias centrais) |
-| `obd/elm_client.dart` | Envia um comando e espera a resposta completa (junta os pedaços do Bluetooth e trata timeout e erros) |
+| `obd/elm_client.dart` | Envia um comando e espera a resposta completa (junta os pedaços do Bluetooth, trata timeout e erros e avisa na hora quando a conexão cai) |
 | `obd/obd_reader.dart` | Inicializa o adaptador, descobre o protocolo e os PIDs suportados, lê cada ciclo e lê ou apaga os códigos de falha |
 | `obd/obd_transport.dart` | Interface do canal de bytes. O Bluetooth real fica em `lib/bluetooth/serial_transport.dart` |
 | `obd/obd_exceptions.dart` | Erros do adaptador: timeout e erros do ELM327 |
