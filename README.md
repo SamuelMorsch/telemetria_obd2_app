@@ -111,8 +111,10 @@ e preserva os dados) e recusa definitiva (descarta só o item inválido).
 Com o carro em movimento o link com o adaptador pode cair. O app percebe na hora, mostra
 "Reconectando…" e tenta de novo, com esperas crescentes (2, 4, 8 e depois 15 segundos), **sem encerrar a
 sessão**: as leituras continuam numeradas, o envio da fila segue e nada se repete. Se ficar 5 minutos sem
-nenhuma leitura, a captura termina e a sessão fecha no horário da última leitura recebida. O
-funcionamento está na [ADR 0004](docs/adr/0004-reconexao-automatica-do-bluetooth.md).
+nenhuma leitura, a captura termina e a sessão fecha no horário da última leitura recebida. Foi verificado em testes automatizados e em carro,
+com o adaptador desconectado e com o Bluetooth do celular desligado: nos dois casos a captura voltou sozinha, e quando
+a conexão não voltou ela terminou ao fim do tempo limite. O funcionamento está na
+[ADR 0004](docs/adr/0004-reconexao-automatica-do-bluetooth.md).
 
 > O SQLite aqui é só a **fila local do celular**. O banco do sistema é o PostgreSQL com TimescaleDB
 > da API, e as diretrizes do curso permitem persistência local no dispositivo para o modo offline.
@@ -164,7 +166,6 @@ e compila o APK.
 
 ## Limitações conhecidas e próximos passos
 - **A captura exige a tela ligada.** Ainda não há serviço em primeiro plano para capturar com a tela apagada.
-- **A reconexão automática do Bluetooth** foi verificada em testes automatizados; a validação com o adaptador em um carro real está pendente.
 - **Códigos de falha só do OBD-II padrão** (motor, câmbio e emissões). Falhas de freios, airbag e
   carroceria exigem protocolos de cada montadora e ficam de fora.
 - Só Android. A comunicação com o adaptador usa Bluetooth clássico, que o iOS não oferece.

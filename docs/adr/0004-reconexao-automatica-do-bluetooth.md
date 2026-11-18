@@ -1,6 +1,6 @@
 # ADR 0004 - Reconexão automática do Bluetooth durante a captura
 
-**Status:** aceita (verificada em testes automatizados; a validação em carro real está pendente)
+**Status:** aceita (verificada em testes automatizados e em carro real)
 
 ## Contexto
 O sistema existe para acompanhar um carro **em movimento**, e é nele que o link Bluetooth entre o
@@ -30,6 +30,8 @@ Nos dois casos o resto da viagem se perdia, e o motorista teria de reiniciar a c
 - **O usuário pode parar a qualquer momento**, inclusive no meio de uma tentativa, e a captura
   encerra normalmente. Se uma tentativa travada terminar depois, a conexão que ela abriu é fechada.
 - **O envio da fila continua** durante a reconexão.
+- **Mensagens curtas.** Os erros do Bluetooth do Android trazem a pilha Java inteira; a tela mostra só o motivo
+  em uma frase (por exemplo, "o adaptador não respondeu (fora de alcance, desconectado ou sem energia)").
 - **A tela avisa:** "Reconectando… (tentativa N)", um quadro de alerta com o horário da última leitura,
   valores antigos sem alerta de queda de tensão e o número de reconexões da captura.
 
@@ -40,8 +42,9 @@ Nos dois casos o resto da viagem se perdia, e o motorista teria de reiniciar a c
   desistência e o fechamento de conexões atrasadas.
 - (-) Enquanto reconecta, não há leituras. O gráfico do painel pode ligar os dois lados da lacuna com
   uma linha reta; marcar a lacuna no gráfico fica como melhoria.
-- (-) O comportamento do plugin Bluetooth numa desconexão real pode diferir do transporte de teste.
-  Por isso a validação em carro real (soltar o adaptador por alguns segundos durante uma captura)
-  está registrada como pendente.
+- (+) Verificada em carro real em três cenários: adaptador desconectado e encaixado de volta, Bluetooth do
+  celular desligado e religado (nos dois a captura voltou sozinha) e adaptador que não volta (a captura
+  terminou ao fim do tempo limite). Esses testes mostraram que a mensagem de erro crua do Android era
+  longa demais para a tela, o que motivou as mensagens curtas.
 - (-) Com a ignição desligada, o adaptador pode perder a energia e a reconexão não funciona; o app
   tenta por 5 minutos e então encerra.

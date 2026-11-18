@@ -133,7 +133,7 @@ class CaptureController extends ChangeNotifier {
       _link = await linkFactory(deviceAddress);
     } catch (e) {
       status = CaptureStatus.error;
-      errorMessage = e is ObdException ? e.message : 'Não foi possível conectar ao adaptador: $e';
+      errorMessage = e is ObdException ? e.message : 'Não foi possível conectar ao adaptador: ${describeError(e)}';
       notifyListeners();
       return;
     }
@@ -252,7 +252,7 @@ class CaptureController extends ChangeNotifier {
           }
         }
       } catch (e) {
-        error = 'Erro inesperado na captura: $e';
+        error = 'Erro inesperado na captura: ${describeError(e)}';
         break;
       }
 
@@ -333,7 +333,7 @@ class CaptureController extends ChangeNotifier {
           result.complete(link);
         }
       }, onError: (Object e) {
-        lastLinkError = e is ObdException ? e.message : '$e';
+        lastLinkError = describeError(e);
         if (!result.isCompleted) result.complete(null);
       }),
     );

@@ -68,7 +68,7 @@ class ElmClient {
         await _transport.write(latin1.encode('$command\r')).timeout(timeout ?? defaultTimeout);
       } catch (e) {
         // Escrever num Bluetooth desconectado lança um erro da biblioteca (ou fica pendurado), que não é do tipo OBD.
-        throw ObdConnectionException('Falha ao enviar o comando $command ao adaptador: $e');
+        throw ObdConnectionException('Falha ao enviar o comando $command ao adaptador: ${describeError(e)}');
       }
       final String raw = await response;
       final List<String> lines = cleanLines(raw, command: command);
